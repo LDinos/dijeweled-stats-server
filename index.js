@@ -5,10 +5,57 @@ const isDebug = args.includes('--debug');
 const port = isDebug ? 6971 : 6970;
 const wss = new WebSocketServer.Server({ port })
 const { createReplay, readReplays, readReplayData } = require('./crud')
-processes = {
-    "retrieve_stats": retrieve_stats,
-    "retrieve_replays": retrieve_replays
-}
+
+/**
+* @typedef {{
+*   gamemode: 'stats',
+*   type: 'time_attack_300' | 'time_attack_180' | 'time_attack_60',
+*   request: "retrieve_stats"
+* } | {
+*   gamemode: 'time_attack_300' | 'time_attack_180' | 'time_attack_60',
+*   user: string,
+*   matches: number,
+*   style: number,
+*   points: number,
+*   request: "retrieve_stats"
+* }} StatsData
+*/
+
+/**
+* @typedef {Object} ReplayInfo
+* @property {boolean} is_twist
+* @property {number} replay_ver
+* @property {string} gamemode
+* @property {string} author
+* @property {string} data
+* @property {number} score
+* @property {number} geode_xplier
+* @property {string} date
+* @property {string} time
+* @property {string} title
+*/
+
+/**
+* @typedef {{
+*   type: 'get',
+*   page: number,
+*   filter: string
+*   request: 'retrieve_replays'
+* } | {
+*   type: 'getData',
+*   id: number
+*   request: 'retrieve_replays'
+* } | {
+*   type: 'upload',
+*   replay_info: ReplayInfo,
+*   request: 'retrieve_replays'
+* }} ReplaysData
+*/
+
+/**
+* @typedef {StatsData | ReplaysData} ProcessedData
+*/
+
 
 if (isDebug) console.log("DEBUG MODE ENABLED")
 
@@ -16,25 +63,28 @@ wss.on('listening', () => {
     console.log(`WebSocket server is listening on port ${port}`);
 });
 
-wss.on('error', (err) => {
+wss.on('error', (/** @type {Error} */ err) => {
     console.error(`WebSocket server failed to start: ${err.message}`);
 });
 
-wss.on("connection", ws => {
+wss.on("connection", /** @param {import('ws')} ws */ ws => {
     console.log("Stats requester connected")
-    ws.on("message", data => {
+    ws.on("message", /** @param {import('ws').Data} data */ data => {
         const processed_data = process_data(data)
-        if (processed_data != false) {
-            const request = processed_data.request
+        if (processed_data) {
             console.log("Request:" + processed_data.request)
-            if (request in processes) {
-                processes[request](processed_data, ws)
+            switch (processed_data.request) {
+                case "retrieve_stats":
+                    retrieve_stats(processed_data, ws)
+                    break;
+                case "retrieve_replays":
+                    retrieve_replays(processed_data, ws)
+                    break;
             }
         }
     })
 
-     //Player disconnected
-     ws.on("close", () => {
+    ws.on("close", () => {
         console.log("Stats requester disconnected");
     })
 
@@ -43,23 +93,34 @@ wss.on("connection", ws => {
     }
 })
 
+/**
+* @param {*} data
+* @returns {ProcessedData | null}
+*/
 function process_data(data) {
     let processed_data;
-        try {
-            processed_data = JSON.parse(data)
-        } catch(e) {
-            console.log("Data is not JSON format")
-            return processed_data = false
-        }
-        return processed_data;
+    try {
+        processed_data = JSON.parse(data)
+    } catch (e) {
+        console.log("Data is not JSON format")
+        return null
+    }
+    return processed_data;
 }
 
+
+/**
+ * @param {ReplaysData} processed_data
+ * @param {import('ws')} ws
+ * @returns {void}
+ */
 function retrieve_replays(processed_data, ws) {
     if (processed_data.type == "get") {
         console.log("retrieve_replays -> get")
         const page = processed_data.page ?? 1
         const filter = processed_data.filter
         readReplays(page, filter, (err, rows) => {
+            console.log(rows.length)
             if (err) {
                 console.error(err.message)
                 ws.send(JSON.stringify({
@@ -78,7 +139,7 @@ function retrieve_replays(processed_data, ws) {
     }
     else if (processed_data.type == "getData") {
         console.log("retrieve_replays -> getData")
-        const id = processed_data.data
+        const id = processed_data.id
         readReplayData(id, (err, result) => {
             console.log(result)
             if (err) {
@@ -102,10 +163,10 @@ function retrieve_replays(processed_data, ws) {
     else if (processed_data.type == "upload") {
         console.log("retrieve_replays -> upload")
         const { title, author, time, gamemode, score, date, data, replay_ver, is_twist, geode_xplier } = processed_data.replay_info
-        const parsed_data = (typeof data === 'string') ? data : JSON.stringify(data) 
+        const parsed_data = (typeof data === 'string') ? data : JSON.stringify(data)
         createReplay(title, author, time, gamemode, score, date, parsed_data, replay_ver, is_twist, geode_xplier, (err, result) => {
             if (err) {
-                ws.send(JSON.stringify ({
+                ws.send(JSON.stringify({
                     response: "replay_upload",
                     status: "error",
                     error: err.message
@@ -115,7 +176,8 @@ function retrieve_replays(processed_data, ws) {
             else {
                 ws.send(JSON.stringify({
                     response: "replay_upload",
-                    status: "success"
+                    status: "success",
+                    id: result.id
                 }))
                 console.log(`Created replay ${result.id}`)
             }
@@ -123,6 +185,11 @@ function retrieve_replays(processed_data, ws) {
     }
 }
 
+/**
+ * @param {StatsData} processed_data
+ * @param {import('ws')} ws
+ * @returns {void}
+ */
 function retrieve_stats(processed_data, ws) {
     const f_path = "data/" + processed_data.gamemode + ".json"
     switch (processed_data.gamemode) {

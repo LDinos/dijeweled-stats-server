@@ -7,7 +7,7 @@ const createReplay = (title, author, time, gamemode, score, date, data, version,
     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
     db.run(sql, [title, author, time, gamemode, score, date, data, version, is_twist, geode_xplier], function (err) {
-        callback(err, {id: this.lastId})
+        callback(err, {id: this.lastID})
     })
 }
 
